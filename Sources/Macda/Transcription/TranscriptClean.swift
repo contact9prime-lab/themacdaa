@@ -8,7 +8,7 @@ enum TranscriptClean {
         var t = text
         let patterns = [
             #"\[[^\]]*\]"#,   // [BLANK_AUDIO], [ Silence ], [MUSIC], [ Inaudible ]
-            #"(?i)\((?:blank[ _]?audio|silence|music|inaudible|applause|laughter|noise|coughs?|sighs?)\)"#,
+            #"(?i)\((?:blank[ _]?audio|silence|music|inaudible|applause|laughter|noise|coughs?|sighs?|[^)]*foreign language[^)]*|speaking[^)]*)\)"#,
             #"[♪♫🎵🎶]"#       // music notes
         ]
         for p in patterns {

@@ -71,19 +71,27 @@ final class AgentEngine {
             return hits.isEmpty ? "no matching meetings"
                 : hits.map { "• \($0.title) (\($0.startedAt.formatted(date: .abbreviated, time: .shortened))): \($0.summary)" }
                     .joined(separator: "\n")
+        case "search_artifacts":
+            let q = (args["query"] ?? "").lowercased()
+            let hits = app.artifacts.filter { !$0.aiText.isEmpty && (q.isEmpty || $0.aiText.lowercased().contains(q)) }.prefix(6)
+            return hits.isEmpty ? "no matching screen artifacts"
+                : hits.map { "• [\($0.createdAt.formatted(date: .abbreviated, time: .shortened))] \($0.aiText)" }
+                    .joined(separator: "\n")
         case "recent_activity":
             let days = Double(args["days"] ?? "1") ?? 1
             let cutoff = Date().addingTimeInterval(-days * 86_400)
             let ms = app.meetings.filter { $0.startedAt >= cutoff }.prefix(10)
             let ns = app.notes.filter { $0.createdAt >= cutoff }.prefix(15)
             let ts = app.todos.filter { $0.createdAt >= cutoff && !$0.done }.prefix(15)
-            if ms.isEmpty && ns.isEmpty && ts.isEmpty {
+            let arts = app.artifacts.filter { $0.createdAt >= cutoff && !$0.aiText.isEmpty }.prefix(8)
+            if ms.isEmpty && ns.isEmpty && ts.isEmpty && arts.isEmpty {
                 return "nothing recorded in the last \(Int(days)) day(s)"
             }
             var out = ""
             if !ms.isEmpty { out += "Meetings:\n" + ms.map { "• \($0.title): \($0.summary)" }.joined(separator: "\n") + "\n" }
             if !ns.isEmpty { out += "Notes:\n" + ns.map { "• \($0.text)" }.joined(separator: "\n") + "\n" }
-            if !ts.isEmpty { out += "Open to-dos:\n" + ts.map { "• \($0.title)" }.joined(separator: "\n") }
+            if !ts.isEmpty { out += "Open to-dos:\n" + ts.map { "• \($0.title)" }.joined(separator: "\n") + "\n" }
+            if !arts.isEmpty { out += "Screen artifacts:\n" + arts.map { "• \($0.aiText)" }.joined(separator: "\n") }
             return out
         case "list_todos":
             let status = args["status"] ?? "open"
@@ -121,11 +129,12 @@ final class AgentEngine {
 
         Tools:
         • recent_activity{"days": 1}            ← use for "today" / "recent" / "what happened"
-        • search_notes   {"query": "keywords"}
-        • search_meetings{"query": "keywords"}
-        • list_todos     {"status": "open|done|all"}
-        • add_todo       {"title": "...", "due": "YYYY-MM-DD or omit"}
-        • add_note       {"text": "..."}
+        • search_notes    {"query": "keywords"}
+        • search_meetings {"query": "keywords"}
+        • search_artifacts{"query": "keywords"}  ← screenshots captured on screen, described by AI
+        • list_todos      {"status": "open|done|all"}
+        • add_todo        {"title": "...", "due": "YYYY-MM-DD or omit"}
+        • add_note        {"text": "..."}
 
         For time-based questions ("today", "this week", "what happened", "recent"), \
         use recent_activity — NEVER search_notes/search_meetings with a date string, \
@@ -153,7 +162,8 @@ final class AgentEngine {
 
     private func dataOverview(_ app: AppState) -> String {
         let openTodos = app.todos.filter { !$0.done }.count
-        return "Snapshot: \(app.notes.count) notes, \(openTodos) open to-dos, \(app.meetings.count) meetings on file."
+        let arts = app.artifacts.filter { !$0.aiText.isEmpty }.count
+        return "Snapshot: \(app.notes.count) notes, \(openTodos) open to-dos, \(app.meetings.count) meetings, \(arts) screen artifacts on file."
     }
 
     private func compact(_ args: [String: String]) -> String {

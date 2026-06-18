@@ -20,6 +20,8 @@ final class AppState: ObservableObject {
     @Published var liveLevel: Float = 0          // 0...1 mic energy for the animation
     @Published var transcribingCount = 0         // chunks in flight → "working" animation
     @Published var partialTranscript: String = ""
+    @Published var livePreview: String = ""      // in-progress utterance, refreshes ~1.5s
+    private var previewBusy = false
     @Published var statusLine: String = "Hi, I'm Macda 👋"
     @Published var selectedTab: DashboardTab = .chat
 
@@ -29,6 +31,7 @@ final class AppState: ObservableObject {
     @Published var todos: [TodoItem] = []
     @Published var people: [Person] = []
     @Published var pendingVoices: [PendingVoice] = []
+    @Published var artifacts: [Artifact] = []
     @Published var activeMeeting: Meeting?
     @Published var settings: Settings = .load()
 
@@ -57,6 +60,7 @@ final class AppState: ObservableObject {
         chatMessages = store.loadChat()
         people = store.loadPeople()
         pendingVoices = store.loadPendingVoices()
+        artifacts = store.loadArtifacts()
         pruneStorage()
         autodetectWhisper()
         settings.save()          // migrate to on-disk settings.json immediately
@@ -107,6 +111,7 @@ final class AppState: ObservableObject {
         transcriptBuffer.reset()
         sessionSegments.removeAll()
         partialTranscript = ""
+        livePreview = ""
         isListening = true
         mood = .listening
         statusLine = "Listening… I'll take notes."
@@ -131,6 +136,7 @@ final class AppState: ObservableObject {
         capture.stop()
         mood = .thinking
         liveLevel = 0
+        livePreview = ""
         statusLine = "Wrapping up… transcribing the tail."
 
         // Snapshot any final audio and the in-flight transcriptions.
@@ -183,6 +189,10 @@ final class AppState: ObservableObject {
         capture.onChunk = { [weak self] chunk in
             Task { @MainActor in self?.handleChunk(chunk) }
         }
+        // Live, in-progress transcript for the mascot bubble (refreshes quickly).
+        capture.onPreview = { [weak self] chunk in
+            Task { @MainActor in self?.handlePreview(chunk) }
+        }
         // Silence detector decided the call went quiet for a while.
         capture.onSilenceTimeout = { [weak self] in
             Task { @MainActor in
@@ -211,13 +221,31 @@ final class AppState: ObservableObject {
                 guard !text.isEmpty else { return }
                 self.transcriptBuffer.append(text)
                 self.partialTranscript = self.transcriptBuffer.recentTail()
+                self.livePreview = ""    // committed text now includes it
                 if !chunk.embedding.isEmpty {
-                    self.sessionSegments.append(VoiceSegment(embedding: chunk.embedding, text: text))
+                    self.sessionSegments.append(VoiceSegment(embedding: chunk.embedding,
+                                                             text: text,
+                                                             audioPath: chunk.url.path))
                 }
             }
         }
         inFlight.append(task)
         inFlight.removeAll { $0.isCancelled }
+    }
+
+    /// Transcribe the in-progress audio for a live bubble update. Drops overlaps
+    /// so it never backs up behind itself.
+    private func handlePreview(_ chunk: AudioChunk) {
+        guard !previewBusy else { return }
+        previewBusy = true
+        Task { [weak self] in
+            guard let self else { return }
+            let text = await self.pipeline.transcribePreview(chunk)
+            await MainActor.run {
+                self.previewBusy = false
+                if self.isListening, !text.isEmpty { self.livePreview = text }
+            }
+        }
     }
 
     // MARK: - Finalize → notes/todos via the LLM
@@ -329,6 +357,7 @@ final class AppState: ObservableObject {
             guard !already else { continue }
             pendingVoices.insert(PendingVoice(label: s.label, sampleQuote: s.sampleQuote,
                                               embedding: s.embedding,
+                                              sampleAudioPath: s.sampleAudioPath,
                                               meetingID: activeMeeting?.id, meetingTitle: title), at: 0)
             added += 1
         }
@@ -368,6 +397,8 @@ final class AppState: ObservableObject {
             person.aliases.append(voice.label)
         }
         person.voicePrint = mergeVoiceprint(existing: person.voicePrint, new: voice.embedding)
+        let saved = store.copyVoiceSample(from: voice.sampleAudioPath, personID: person.id)
+        if !saved.isEmpty { person.voiceSamplePath = saved }
         updatePerson(person)
         linkSpeakerInMeetings(label: voice.label, meetingID: voice.meetingID, personID: personID)
         dismissVoice(voice)
@@ -376,6 +407,7 @@ final class AppState: ObservableObject {
     func tagVoiceAsNewPerson(_ voice: PendingVoice, name: String) {
         var person = Person(name: name, aliases: voice.label.lowercased() == name.lowercased() ? [] : [voice.label])
         person.voicePrint = voice.embedding
+        person.voiceSamplePath = store.copyVoiceSample(from: voice.sampleAudioPath, personID: person.id)
         addPerson(person)
         linkSpeakerInMeetings(label: voice.label, meetingID: voice.meetingID, personID: person.id)
         dismissVoice(voice)
@@ -416,6 +448,15 @@ final class AppState: ObservableObject {
     func persistSettings() {
         settings.save()
         pipeline.configure(with: settings)
+    }
+
+    /// Full committed transcript of the current session (for the live view).
+    func currentTranscript() -> String { transcriptBuffer.fullText() }
+
+    var liveElapsedString: String {
+        guard let start = activeMeeting?.startedAt else { return "00:00" }
+        let s = max(0, Int(Date().timeIntervalSince(start)))
+        return String(format: "%02d:%02d", s / 60, s % 60)
     }
 
     // MARK: - Mascot appearance
@@ -469,6 +510,48 @@ final class AppState: ObservableObject {
         case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
         default: return false
         }
+    }
+
+    // MARK: - Screen artifacts
+
+    /// Capture a screenshot, store it, and analyze it with the vision model.
+    func captureScreenshot() {
+        statusLine = "📸 Capturing screen…"
+        let meetingID = activeMeeting?.id
+        let settingsSnapshot = settings
+        Task {
+            do {
+                let png = try await ScreenshotCapture.capturePNG()
+                let id = UUID()
+                let url = store.artifactsDir.appendingPathComponent("\(id.uuidString).png")
+                try png.write(to: url, options: .atomic)
+                var artifact = Artifact(id: id, imagePath: url.path, meetingID: meetingID, analyzing: true)
+                await MainActor.run {
+                    self.artifacts.insert(artifact, at: 0)
+                    self.store.saveArtifacts(self.artifacts)
+                    self.statusLine = "🧠 Analyzing the screenshot…"
+                }
+                let text = (try? await VisionAnalyzer(settings: settingsSnapshot).analyze(pngData: png)) ?? ""
+                artifact.aiText = text
+                artifact.analyzing = false
+                await MainActor.run {
+                    if let idx = self.artifacts.firstIndex(where: { $0.id == id }) { self.artifacts[idx] = artifact }
+                    self.store.saveArtifacts(self.artifacts)
+                    self.statusLine = text.isEmpty ? "Saved screenshot (no analysis)." : "Saved screen artifact 🖼️"
+                }
+            } catch {
+                await MainActor.run {
+                    self.mood = .error(error.localizedDescription)
+                    self.statusLine = "Screenshot failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func deleteArtifact(_ artifact: Artifact) {
+        try? FileManager.default.removeItem(atPath: artifact.imagePath)
+        artifacts.removeAll { $0.id == artifact.id }
+        store.saveArtifacts(artifacts)
     }
 
     // MARK: - Storage location

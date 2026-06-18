@@ -50,6 +50,7 @@ struct Person: Identifiable, Codable, Hashable {
     var aliases: [String] = []     // other names the LLM might use for them
     var voiceNote: String = ""     // your description of their voice/footprint
     var voicePrint: [Float] = []   // acoustic embedding for auto-recognition
+    var voiceSamplePath: String = ""  // a retained audio clip of them, for replay
     var createdAt: Date = Date()
 
     var hasVoiceprint: Bool { !voicePrint.isEmpty }
@@ -62,6 +63,7 @@ struct DetectedSpeaker: Identifiable, Codable, Hashable {
     var sampleQuote: String = ""
     var personID: UUID?            // set when matched/tagged to a Person
     var embedding: [Float] = []    // this speaker's voiceprint for enrollment
+    var sampleAudioPath: String = ""  // a chunk of this speaker's audio, to play back
 }
 
 /// An untagged voice surfaced after a call: "new voice found — who is this?"
@@ -70,9 +72,20 @@ struct PendingVoice: Identifiable, Codable, Hashable {
     var label: String
     var sampleQuote: String
     var embedding: [Float] = []    // enroll this as the person's voiceprint on tag
+    var sampleAudioPath: String = ""  // audio clip of this voice, to listen before tagging
     var meetingID: UUID?
     var meetingTitle: String
     var createdAt: Date = Date()
+}
+
+/// A captured screen snapshot plus its AI analysis, attached to a meeting.
+struct Artifact: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var imagePath: String
+    var aiText: String = ""
+    var meetingID: UUID?
+    var createdAt: Date = Date()
+    var analyzing: Bool = false
 }
 
 /// Result of asking the LLM to turn a transcript into structured output.

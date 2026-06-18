@@ -4,6 +4,7 @@ import Foundation
 struct VoiceSegment {
     let embedding: [Float]
     let text: String
+    let audioPath: String
 }
 
 /// Groups session segments into speakers: matches each to a known person's
@@ -17,9 +18,15 @@ struct VoiceMatcher {
         var embeddings: [[Float]] = []
         var quotes: [String] = []
         var centroid: [Float] = []
+        var bestAudioPath = ""        // clip with the most speech, for playback
+        private var bestLen = -1
         func add(_ seg: VoiceSegment) {
             embeddings.append(seg.embedding)
             if quotes.count < 3, !seg.text.isEmpty { quotes.append(seg.text) }
+            if seg.text.count > bestLen, !seg.audioPath.isEmpty {
+                bestLen = seg.text.count
+                bestAudioPath = seg.audioPath
+            }
             centroid = VoiceEmbedder.centroid(embeddings)
         }
     }
@@ -49,7 +56,8 @@ struct VoiceMatcher {
             speakers.append(DetectedSpeaker(label: label,
                                             sampleQuote: c.quotes.first ?? "",
                                             personID: c.person?.id,
-                                            embedding: c.centroid))
+                                            embedding: c.centroid,
+                                            sampleAudioPath: c.bestAudioPath))
         }
         return speakers
     }

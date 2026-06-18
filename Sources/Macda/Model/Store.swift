@@ -38,6 +38,27 @@ final class Store {
         return r
     }
 
+    /// Permanent per-person voice samples (NOT pruned), so you can always replay
+    /// an enrolled person's voice.
+    var voicesDir: URL {
+        let v = dir.appendingPathComponent("voices", isDirectory: true)
+        try? FileManager.default.createDirectory(at: v, withIntermediateDirectories: true)
+        return v
+    }
+
+    /// Copy a sample clip into the permanent voices folder; returns its path.
+    func copyVoiceSample(from path: String, personID: UUID) -> String {
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return "" }
+        let dest = voicesDir.appendingPathComponent("\(personID.uuidString).wav")
+        try? FileManager.default.removeItem(at: dest)
+        do {
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: path), to: dest)
+            return dest.path
+        } catch {
+            return ""
+        }
+    }
+
     /// Delete recordings older than `maxAge` seconds (default 24h).
     func cleanupOldRecordings(maxAge: TimeInterval = 86_400) {
         let fm = FileManager.default
@@ -107,4 +128,14 @@ final class Store {
 
     func loadPendingVoices() -> [PendingVoice] { load("pending_voices.json", as: [PendingVoice].self) ?? [] }
     func savePendingVoices(_ v: [PendingVoice]) { save(v, to: "pending_voices.json") }
+
+    func loadArtifacts() -> [Artifact] { load("artifacts.json", as: [Artifact].self) ?? [] }
+    func saveArtifacts(_ a: [Artifact]) { save(a, to: "artifacts.json") }
+
+    /// Folder for captured screen artifacts (PNG), kept with the data.
+    var artifactsDir: URL {
+        let a = dir.appendingPathComponent("artifacts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: a, withIntermediateDirectories: true)
+        return a
+    }
 }

@@ -32,7 +32,19 @@ struct SettingsView: View {
                         labeledField("whisper.cpp binary", text: s.whisperCppBinaryPath,
                                      hint: "e.g. /opt/homebrew/bin/whisper-cli")
                         labeledField("Model file (.bin)", text: s.whisperModelPath,
-                                     hint: "e.g. ~/models/ggml-base.en.bin")
+                                     hint: "ggml-small.bin (multilingual) or ggml-base.en.bin (English)")
+                        Picker("Language", selection: s.whisperLanguage) {
+                            Text("Auto-detect").tag("auto")
+                            Text("English").tag("en")
+                            Text("Hindi").tag("hi")
+                            Text("Spanish").tag("es")
+                            Text("French").tag("fr")
+                            Text("German").tag("de")
+                            Text("Chinese").tag("zh")
+                            Text("Arabic").tag("ar")
+                        }
+                        Text("Non-English needs a multilingual model (e.g. ggml-small.bin). Setting the language explicitly is more reliable than auto-detect on short clips.")
+                            .font(.caption).foregroundStyle(.secondary)
                         statusBadge(appState.settings.whisperReady,
                                     ok: "whisper.cpp ready", bad: "Set binary + model for local transcription")
                     }
@@ -50,6 +62,19 @@ struct SettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     connectionTester
+                }
+
+                groupBox("Screen artifacts (⌥⌘S)") {
+                    if appState.settings.llmProvider == .ollama {
+                        ollamaModelControls(model: s.visionModel, label: "Vision model", allowSameAsNotes: true)
+                        Text("Use a vision-capable model (gemma4 understands images). ⌥⌘S captures the screen and analyzes it into an artifact.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        labeledField("Vision model", text: s.visionModel,
+                                     hint: appState.settings.llmProvider == .openAI ? "gpt-4o-mini" : "gemini-1.5-flash")
+                        Text("Screenshots are sent to your selected cloud provider's vision model.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
 
                 groupBox("Cloud keys (optional)") {

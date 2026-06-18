@@ -11,6 +11,7 @@ final class HotKeyManager {
     private let onToggleListening: () -> Void
     private let onOpenDashboard: () -> Void
     private let onQuickNote: () -> Void
+    private let onScreenshot: () -> Void
 
     private var handlers: [UInt32: () -> Void] = [:]
     private var hotKeyRefs: [EventHotKeyRef?] = []
@@ -19,11 +20,13 @@ final class HotKeyManager {
     init(appState: AppState,
          onToggleListening: @escaping () -> Void,
          onOpenDashboard: @escaping () -> Void,
-         onQuickNote: @escaping () -> Void) {
+         onQuickNote: @escaping () -> Void,
+         onScreenshot: @escaping () -> Void) {
         self.appState = appState
         self.onToggleListening = onToggleListening
         self.onOpenDashboard = onOpenDashboard
         self.onQuickNote = onQuickNote
+        self.onScreenshot = onScreenshot
     }
 
     func register() {
@@ -33,6 +36,7 @@ final class HotKeyManager {
         add(id: 1, keyCode: UInt32(kVK_Space), modifiers: optionMod, action: onToggleListening)
         add(id: 2, keyCode: UInt32(kVK_ANSI_D), modifiers: cmdOption, action: onOpenDashboard)
         add(id: 3, keyCode: UInt32(kVK_ANSI_N), modifiers: cmdOption, action: onQuickNote)
+        add(id: 4, keyCode: UInt32(kVK_ANSI_S), modifiers: cmdOption, action: onScreenshot)
     }
 
     private func installHandler() {

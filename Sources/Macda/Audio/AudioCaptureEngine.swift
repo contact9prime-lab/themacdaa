@@ -10,6 +10,7 @@ final class AudioCaptureEngine {
     // Callbacks (may fire on a background queue).
     var onLevel: ((Float) -> Void)?
     var onChunk: ((AudioChunk) -> Void)?
+    var onPreview: ((AudioChunk) -> Void)?   // live, in-progress transcript for the bubble
     var onSilenceTimeout: (() -> Void)?
     var onError: ((String) -> Void)?
 
@@ -34,6 +35,8 @@ final class AudioCaptureEngine {
     private var hasSpeech = false
     private var trailingSilence: Double = 0
     private var totalSilenceSinceSpeech: Double = 0
+    private var previewElapsed: Double = 0
+    private let previewInterval: Double = 1.5   // refresh the live bubble every ~1.5s
 
     private var settings = Settings()
     private var recordingsDir = Store().recordingsDir
@@ -183,12 +186,18 @@ final class AudioCaptureEngine {
         }
 
         let chunkSeconds = Double(currentChunk.count) / Double(WAV.sampleRate)
+        previewElapsed += seconds
 
         // Cut a chunk when speech is followed by a natural pause, or it hits the
         // length cap. Each emitted chunk is transcribed in parallel (capped by
         // settings.parallelTranscriptions) so we never wait on the previous one.
         if hasSpeech && (trailingSilence >= 0.7 || chunkSeconds >= effectiveMaxChunk) {
             if let chunk = emitChunkLocked() { onChunk?(chunk) }
+            previewElapsed = 0
+        } else if hasSpeech && chunkSeconds >= 1.2 && previewElapsed >= previewInterval {
+            // Live preview: transcribe the in-progress chunk for the bubble.
+            previewElapsed = 0
+            if let preview = writePreviewLocked() { onPreview?(preview) }
         }
 
         // Whole call went quiet for too long → ask AppState to auto-stop.
@@ -219,8 +228,19 @@ final class AudioCaptureEngine {
         }
     }
 
+    /// Snapshot the in-progress chunk to a fixed file for a live transcript.
+    private func writePreviewLocked() -> AudioChunk? {
+        guard currentChunk.count > WAV.sampleRate / 2 else { return nil }
+        let url = recordingsDir.appendingPathComponent("preview-\(sessionID).wav")
+        do {
+            try WAV.write(currentChunk, to: url)
+            return AudioChunk(url: url, index: -1, duration: Double(currentChunk.count) / Double(WAV.sampleRate))
+        } catch { return nil }
+    }
+
     private func reset() {
         mixer.reset()
+        previewElapsed = 0
         currentChunk.removeAll()
         chunkIndex = 0
         hasSpeech = false

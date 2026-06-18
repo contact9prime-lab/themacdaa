@@ -45,14 +45,16 @@ struct Settings: Codable {
     // Local tooling
     var whisperCppBinaryPath: String = "/usr/local/bin/whisper-cli"
     var whisperModelPath: String = ""    // e.g. ~/models/ggml-base.en.bin
+    var whisperLanguage: String = "auto" // "auto", "en", "hi", … (use a multilingual model for non-English)
     var ollamaBaseURL: String = "http://127.0.0.1:11434"
     var ollamaModel: String = "llama3.1"
     var ollamaTranscribeModel: String = ""   // empty = use ollamaModel
+    var visionModel: String = ""             // screenshot analysis model; empty = use ollamaModel
 
     // Cloud keys (stored in UserDefaults for simplicity; move to Keychain for prod)
     var openAIKey: String = ""
     var openAIModel: String = "gpt-4o-mini"
-    var openAITranscribeModel: String = "whisper-1"
+    var openAITranscribeModel: String = "gpt-4o-mini-transcribe"  // faster/better than whisper-1
     var geminiKey: String = ""
     var geminiModel: String = "gemini-1.5-flash"
 
@@ -136,9 +138,11 @@ extension Settings {
         llmProvider             = s(.llmProvider, d.llmProvider)
         whisperCppBinaryPath    = s(.whisperCppBinaryPath, d.whisperCppBinaryPath)
         whisperModelPath        = s(.whisperModelPath, d.whisperModelPath)
+        whisperLanguage         = s(.whisperLanguage, d.whisperLanguage)
         ollamaBaseURL           = s(.ollamaBaseURL, d.ollamaBaseURL)
         ollamaModel             = s(.ollamaModel, d.ollamaModel)
         ollamaTranscribeModel   = s(.ollamaTranscribeModel, d.ollamaTranscribeModel)
+        visionModel             = s(.visionModel, d.visionModel)
         openAIKey               = s(.openAIKey, d.openAIKey)
         openAIModel             = s(.openAIModel, d.openAIModel)
         openAITranscribeModel   = s(.openAITranscribeModel, d.openAITranscribeModel)

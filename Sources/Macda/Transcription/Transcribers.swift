@@ -8,6 +8,7 @@ import Foundation
 struct WhisperCppTranscriber: Transcriber {
     let binary: String
     let model: String
+    var language: String = "auto"
 
     func transcribe(_ chunk: AudioChunk) async throws -> String {
         guard FileManager.default.isExecutableFile(atPath: binary) else {
@@ -16,7 +17,8 @@ struct WhisperCppTranscriber: Transcriber {
         guard !model.isEmpty, FileManager.default.fileExists(atPath: model) else {
             throw TranscriberError.missingConfig("whisper model not set. Point Settings at a ggml-*.bin file.")
         }
-        let args = ["-m", model, "-f", chunk.url.path, "-nt", "-np", "-l", "auto"]
+        let lang = language.isEmpty ? "auto" : language
+        let args = ["-m", model, "-f", chunk.url.path, "-nt", "-np", "-l", lang]
         let output = try Process.run(executable: binary, arguments: args)
         // whisper.cpp prints the transcript to stdout (no timestamps with -nt).
         return output

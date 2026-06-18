@@ -43,6 +43,7 @@ struct PeopleView: View {
 struct PendingVoiceRow: View {
     let voice: PendingVoice
     @ObservedObject var appState: AppState
+    @ObservedObject private var playback = AudioPlayback.shared
     @State private var newName = ""
 
     var body: some View {
@@ -50,6 +51,16 @@ struct PendingVoiceRow: View {
             HStack {
                 Image(systemName: "waveform.badge.questionmark").foregroundStyle(.orange)
                 Text(voice.label).font(.headline)
+                if playback.available(voice.sampleAudioPath) {
+                    Button {
+                        playback.toggle(voice.sampleAudioPath)
+                    } label: {
+                        Label(playback.playingPath == voice.sampleAudioPath ? "Stop" : "Listen",
+                              systemImage: playback.playingPath == voice.sampleAudioPath ? "stop.fill" : "play.fill")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .help("Hear this voice to identify who it is")
+                }
                 Spacer()
                 Text(voice.meetingTitle).font(.caption).foregroundStyle(.secondary)
             }
@@ -96,6 +107,7 @@ struct PendingVoiceRow: View {
 struct PersonRow: View {
     let person: Person
     @ObservedObject var appState: AppState
+    @ObservedObject private var playback = AudioPlayback.shared
     @State private var editing = false
 
     var body: some View {
@@ -118,6 +130,15 @@ struct PersonRow: View {
                 }
             }
             Spacer()
+            if playback.available(person.voiceSamplePath) {
+                Button {
+                    playback.toggle(person.voiceSamplePath)
+                } label: {
+                    Image(systemName: playback.playingPath == person.voiceSamplePath ? "stop.circle.fill" : "play.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("Play \(person.name)'s voice sample")
+            }
             Button { editing = true } label: { Image(systemName: "pencil") }.buttonStyle(.borderless)
             Button(role: .destructive) { appState.deletePerson(person) } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)

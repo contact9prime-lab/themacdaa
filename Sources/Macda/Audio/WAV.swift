@@ -5,11 +5,17 @@ enum WAV {
     static let sampleRate = 16_000
 
     static func write(_ samples: [Float], to url: URL) throws {
+        // Mixing mic + system can sum past full-scale; peak-limit instead of
+        // hard-clipping so the audio stays clean for the transcriber.
+        var gain: Float = 1
+        if let peak = samples.map({ abs($0) }).max(), peak > 0.99 {
+            gain = 0.99 / peak
+        }
         var pcm = [Int16]()
         pcm.reserveCapacity(samples.count)
         for s in samples {
-            let clamped = max(-1, min(1, s))
-            pcm.append(Int16(clamped * Float(Int16.max)))
+            let v = max(-1, min(1, s * gain))
+            pcm.append(Int16(v * Float(Int16.max)))
         }
         let data = encode(pcm)
         try data.write(to: url, options: .atomic)
