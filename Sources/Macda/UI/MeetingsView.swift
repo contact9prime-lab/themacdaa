@@ -36,7 +36,12 @@ struct MeetingsView: View {
 struct MeetingRow: View {
     let meeting: Meeting
     @ObservedObject var appState: AppState
+    @ObservedObject private var playback = AudioPlayback.shared
     @State private var showTranscript = false
+
+    private var availableAudio: [String] {
+        meeting.audioFiles.filter { FileManager.default.fileExists(atPath: $0) }
+    }
 
     private var isLive: Bool { appState.activeMeeting?.id == meeting.id && appState.isListening }
     private var todoCount: Int { appState.todos.filter { $0.meetingID == meeting.id }.count }
@@ -98,11 +103,21 @@ struct MeetingRow: View {
 
             if !isLive {
                 HStack(spacing: 8) {
-                    Button { appState.startListening(for: meeting) } label: {
-                        Label("Start & listen", systemImage: "mic.fill").font(.system(size: 11))
+                    if !availableAudio.isEmpty {
+                        Button { playback.playSequence(availableAudio, id: meeting.id.uuidString) } label: {
+                            Label(playback.playingPath == meeting.id.uuidString ? "Stop" : "Play recording",
+                                  systemImage: playback.playingPath == meeting.id.uuidString ? "stop.fill" : "play.fill")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
                     }
-                    .buttonStyle(.bordered).controlSize(.small).tint(Theme.accent)
-                    .disabled(appState.isListening)
+                    if !meeting.transcript.isEmpty {
+                        Button { appState.reprocessMeeting(meeting) } label: {
+                            Label("Re-generate notes", systemImage: "arrow.clockwise").font(.system(size: 11))
+                        }
+                        .buttonStyle(.bordered).controlSize(.small).tint(Theme.accent)
+                    }
+                    Spacer()
                     Button(role: .destructive) { appState.deleteMeeting(meeting) } label: { Image(systemName: "trash") }
                         .buttonStyle(.bordered).controlSize(.small)
                 }

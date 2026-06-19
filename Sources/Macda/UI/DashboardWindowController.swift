@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 enum DashboardTab: String, CaseIterable, Identifiable {
-    case chat, notes, todos, meetings, people, artifacts, settings
+    case chat, notes, todos, meetings, people, artifacts, logs, settings
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -12,6 +12,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .meetings: return "Meetings"
         case .people: return "People"
         case .artifacts: return "Captures"
+        case .logs: return "Logs"
         case .settings: return "Settings"
         }
     }
@@ -23,6 +24,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .meetings: return "calendar"
         case .people: return "person.2"
         case .artifacts: return "photo.on.rectangle.angled"
+        case .logs: return "doc.text.magnifyingglass"
         case .settings: return "gearshape"
         }
     }

@@ -35,6 +35,23 @@ enum AudioDevices {
         return inputDevices().first { $0.uid == wanted }?.id
     }
 
+    /// Make `uid` the system default input device. This is far more reliable
+    /// than setting a device directly on an AVAudioEngine input node, which
+    /// intermittently fails or delivers no audio.
+    @discardableResult
+    static func makeDefaultInput(uid: String) -> Bool {
+        guard let id = deviceID(forUID: uid) else { return false }
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var dev = id
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &dev)
+        return status == noErr
+    }
+
     // MARK: - Property helpers
 
     private static func hasInput(_ id: AudioDeviceID) -> Bool {

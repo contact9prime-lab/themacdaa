@@ -66,6 +66,30 @@ struct OpenAIChatProvider: LLMProvider {
     }
 }
 
+// MARK: - OpenRouter (OpenAI-compatible)
+
+struct OpenRouterChatProvider: LLMProvider {
+    let apiKey: String
+    let model: String
+
+    func complete(system: String, user: String, json: Bool) async throws -> String {
+        guard !apiKey.isEmpty else { throw TranscriberError.missingConfig("OpenRouter API key missing.") }
+        let url = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
+        var payload: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": system],
+                ["role": "user", "content": user]
+            ]
+        ]
+        if json { payload["response_format"] = ["type": "json_object"] }
+        let data = try await Networking.postJSON(url, payload, headers: OpenRouter.headers(apiKey))
+        let content = OpenRouter.content(from: data)
+        guard !content.isEmpty else { throw TranscriberError.decode("Empty OpenRouter response.") }
+        return content
+    }
+}
+
 // MARK: - Gemini
 
 struct GeminiChatProvider: LLMProvider {

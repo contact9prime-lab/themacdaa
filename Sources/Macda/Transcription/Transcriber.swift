@@ -36,16 +36,19 @@ final class TranscriptionPipeline {
         // fallback when the primary yields nothing usable.
         fallback = (settings.transcriptionProvider != .whisperCpp && settings.whisperReady)
             ? WhisperCppTranscriber(binary: settings.whisperCppBinaryPath, model: settings.whisperModelPath,
-                                    language: settings.whisperLanguage)
+                                    language: settings.whisperLanguage, useGPU: settings.whisperUseGPU)
             : nil
         switch settings.transcriptionProvider {
+        case .openRouter:
+            transcriber = OpenRouterTranscriber(apiKey: settings.openRouterKey, model: settings.openRouterModel)
         case .ollamaAudio:
             let model = settings.ollamaTranscribeModel.isEmpty ? settings.ollamaModel : settings.ollamaTranscribeModel
             transcriber = OllamaAudioTranscriber(baseURL: settings.ollamaBaseURL, model: model)
         case .whisperCpp:
             transcriber = WhisperCppTranscriber(binary: settings.whisperCppBinaryPath,
                                                 model: settings.whisperModelPath,
-                                                language: settings.whisperLanguage)
+                                                language: settings.whisperLanguage,
+                                                useGPU: settings.whisperUseGPU)
         case .openAI:
             transcriber = OpenAITranscriber(apiKey: settings.openAIKey,
                                             model: settings.openAITranscribeModel)

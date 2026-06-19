@@ -7,6 +7,7 @@ struct NoteExtractor {
     private var provider: LLMProvider {
         switch settings.llmProvider {
         case .ollama: return OllamaProvider(baseURL: settings.ollamaBaseURL, model: settings.ollamaModel)
+        case .openRouter: return OpenRouterChatProvider(apiKey: settings.openRouterKey, model: settings.openRouterModel)
         case .openAI: return OpenAIChatProvider(apiKey: settings.openAIKey, model: settings.openAIModel)
         case .gemini: return GeminiChatProvider(apiKey: settings.geminiKey, model: settings.geminiModel)
         }
@@ -32,17 +33,21 @@ struct NoteExtractor {
         extract structured output. Reply with STRICT JSON only, no prose, matching:
         {
           "summary": "2-3 sentence summary",
-          "notes": ["short bullet note", ...],
-          "todos": [{"title": "actionable task", "due": "YYYY-MM-DD or null"}, ...],
+          "notes": [{"text": "a complete note", "tags": ["1-3 short topic tags"]}, ...],
+          "todos": [{"title": "actionable task", "due": "YYYY-MM-DD or null", "owner": "person's name who owns it, or null"}, ...],
           "speakers": [{"label": "name if known else Speaker 1/2/…", "sampleQuote": "a short line they said"}]
         }
+        Every note MUST have 1-3 short topic tags (e.g. "pricing", "hiring", "bug"). \
         Notes must be COMPLETE, not a short summary: capture every substantive \
         point, decision, number, name, and detail discussed. Group related points \
         about the SAME topic into ONE coherent multi-sentence note rather than \
         fragmenting them — each note should read as a self-contained mini-story. \
         Do not drop details to be brief. Todos are concrete action items with an \
-        owner if mentioned; infer due dates from phrases like "by Friday" relative \
-        to today, otherwise null. For speakers, list each DISTINCT voice; if a \
+        owner if mentioned (the person responsible). Set a "due" date for EVERY \
+        todo: infer it from phrases like "by Friday"/"next week" relative to today; \
+        if no deadline is stated, choose a sensible near-term date (within the next \
+        few days) so it can be tracked. Use YYYY-MM-DD. For speakers, list each \
+        DISTINCT voice; if a \
         known person clearly matches, use their name, else "Speaker 1", "Speaker 2".
         """
 
@@ -69,11 +74,21 @@ struct NoteExtractor {
                                     notes: [], todos: [])
         }
         let summary = obj["summary"] as? String ?? ""
-        let notes = (obj["notes"] as? [Any])?.compactMap { $0 as? String } ?? []
+        let notes: [ExtractionResult.Note] = (obj["notes"] as? [Any])?.compactMap { raw in
+            if let dict = raw as? [String: Any], let text = dict["text"] as? String, !text.isEmpty {
+                let tags = (dict["tags"] as? [Any])?.compactMap { $0 as? String } ?? []
+                return ExtractionResult.Note(text: text, tags: tags)
+            }
+            if let text = raw as? String, !text.isEmpty {   // tolerate plain-string notes
+                return ExtractionResult.Note(text: text, tags: [])
+            }
+            return nil
+        } ?? []
         let todos: [ExtractionResult.Todo] = (obj["todos"] as? [[String: Any]])?.compactMap { t in
             guard let title = t["title"] as? String, !title.isEmpty else { return nil }
             let due = (t["due"] as? String).flatMap { ISO8601DateFormatter.dateOnly.date(from: $0) }
-            return ExtractionResult.Todo(title: title, due: due)
+            let owner = (t["owner"] as? String).flatMap { $0.isEmpty || $0.lowercased() == "null" ? nil : $0 }
+            return ExtractionResult.Todo(title: title, due: due, owner: owner)
         } ?? []
         let speakers: [DetectedSpeaker] = (obj["speakers"] as? [[String: Any]])?.compactMap { s in
             guard let label = s["label"] as? String, !label.isEmpty else { return nil }

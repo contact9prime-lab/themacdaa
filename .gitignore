@@ -1,4 +1,6 @@
 .build/
+.build-arm/
+.build-x86/
 build/
 *.xcodeproj
 *.xcworkspace

@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import CoreAudio
 import AudioToolbox
+import MacdaObjC
 
 /// Captures microphone (+ optional system audio), mixes both at 16kHz mono,
 /// computes a live level for the mascot animation, and cuts the stream into
@@ -11,13 +12,14 @@ final class AudioCaptureEngine {
     var onLevel: ((Float) -> Void)?
     var onChunk: ((AudioChunk) -> Void)?
     var onPreview: ((AudioChunk) -> Void)?   // live, in-progress transcript for the bubble
+    var onBatchProgress: ((Double) -> Void)? // 0…1 toward the next 30s batch
     var onSilenceTimeout: (() -> Void)?
     var onError: ((String) -> Void)?
 
     private let micSourceID = 0
     private let systemSourceID = 1
 
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let mixer = TimelineMixer()
     private var systemCapture: SystemAudioCapture?
     private let queue = DispatchQueue(label: "macda.audio.process")
@@ -89,34 +91,63 @@ final class AudioCaptureEngine {
     }
 
     private func startMic() throws {
-        let input = engine.inputNode
-
-        // Point the engine at the chosen input device (not just the default).
-        if let deviceID = AudioDevices.deviceID(forUID: settings.micDeviceUID),
-           let unit = input.audioUnit {
-            var dev = deviceID
-            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
-                                 kAudioUnitScope_Global, 0, &dev,
-                                 UInt32(MemoryLayout<AudioDeviceID>.size))
-        }
-
-        let inputFormat = input.inputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw micError("Selected microphone has no input. Pick another in Settings → Listening.")
-        }
-        converter = AVAudioConverter(from: inputFormat, to: targetFormat)
         mixer.activate(micSourceID)
-
-        input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            let frames = self.resample(buffer)
-            if !frames.isEmpty { self.mixer.add(frames, source: self.micSourceID) }
+        // Make the chosen mic the system default, then capture the default input
+        // (reliable — unlike setting a device on the engine's input node).
+        if !settings.micDeviceUID.isEmpty {
+            let ok = AudioDevices.makeDefaultInput(uid: settings.micDeviceUID)
+            Log.info("Set default input to selected mic: \(ok ? "ok" : "failed")")
         }
+        engine = AVAudioEngine()        // pick up the (possibly new) default device
+        if installMicTap() { return }
+        Log.error("Mic tap failed — retrying with a fresh engine.")
+        engine = AVAudioEngine()
+        if installMicTap() { return }
+        throw micError("Couldn't start the microphone. Check System Settings → Privacy → Microphone.")
+    }
+
+    /// Installs a tap on the default input node and starts the engine.
+    private func installMicTap() -> Bool {
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        converter = nil
+
+        let candidates = [input.outputFormat(forBus: 0), input.inputFormat(forBus: 0)]
+            .filter { $0.sampleRate > 0 && $0.channelCount > 0 }
+        var installed = false
+        for fmt in candidates {
+            input.removeTap(onBus: 0)
+            var tapError: NSError?
+            let ok = MacdaTryCatch({
+                input.installTap(onBus: 0, bufferSize: 2048, format: fmt) { [weak self] buffer, _ in
+                    guard let self else { return }
+                    let frames = self.resample(buffer)
+                    if !frames.isEmpty { self.mixer.add(frames, source: self.micSourceID) }
+                }
+            }, &tapError)
+            if ok { installed = true; break }
+            else { Log.error("Mic tap failed (\(Int(fmt.sampleRate))Hz): \(tapError?.localizedDescription ?? "?")") }
+        }
+        guard installed else { return false }
+
         engine.prepare()
-        try engine.start()
+        var startError: NSError?
+        let started = MacdaTryCatch({ try? self.engine.start() }, &startError)
+        if !started || !engine.isRunning {
+            Log.error("Audio engine start failed: \(startError?.localizedDescription ?? "not running")")
+            input.removeTap(onBus: 0)
+            return false
+        }
+        Log.info("Mic tap installed on default input (\(Int(input.inputFormat(forBus: 0).sampleRate))Hz).")
+        return true
     }
 
     private func resample(_ buffer: AVAudioPCMBuffer) -> [Float] {
+        // Build/refresh the converter for whatever format the tap actually
+        // delivers (the device may differ from what we first read).
+        if converter == nil || converter?.inputFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: targetFormat)
+        }
         guard let converter else { return floatMono(buffer) }
         let ratio = targetFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 16)
@@ -187,13 +218,14 @@ final class AudioCaptureEngine {
 
         let chunkSeconds = Double(currentChunk.count) / Double(WAV.sampleRate)
         previewElapsed += seconds
+        onBatchProgress?(min(1, chunkSeconds / effectiveMaxChunk))
 
-        // Cut a chunk when speech is followed by a natural pause, or it hits the
-        // length cap. Each emitted chunk is transcribed in parallel (capped by
-        // settings.parallelTranscriptions) so we never wait on the previous one.
-        if hasSpeech && (trailingSilence >= 0.7 || chunkSeconds >= effectiveMaxChunk) {
+        // Hard-cut every 30s (so a batch always closes and transcribes on time),
+        // or earlier on a natural pause. Each chunk transcribes in parallel.
+        if chunkSeconds >= effectiveMaxChunk || (hasSpeech && trailingSilence >= 1.2) {
             if let chunk = emitChunkLocked() { onChunk?(chunk) }
             previewElapsed = 0
+            onBatchProgress?(0)
         } else if hasSpeech && chunkSeconds >= 1.2 && previewElapsed >= previewInterval {
             // Live preview: transcribe the in-progress chunk for the bubble.
             previewElapsed = 0

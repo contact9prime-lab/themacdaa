@@ -11,27 +11,46 @@ struct CharacterView: View {
     @State private var hovering = false
     private let blinkTimer = Timer.publish(every: 3.4, on: .main, in: .common).autoconnect()
 
+    private var isMinimized: Bool { appState.minimized && !hovering && !appState.isListening }
+
     var body: some View {
         Group {
-            if appState.isListening {
+            if isMinimized {
+                minimizedView
+            } else if appState.isListening {
                 expandedHUD
             } else {
                 compact
             }
         }
-        .frame(width: appState.isListening ? 312 : 168, alignment: .bottom)
+        .frame(width: bodyWidth, alignment: .bottom)
         .onAppear {
             withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { breathe = true }
         }
         .onReceive(blinkTimer) { _ in doBlink() }
-        .onHover { hovering = $0 }
+        .onHover { h in hovering = h; if h { appState.wakeMascot() } }
         .contextMenu { ContextMenuContent(appState: appState) }
+    }
+
+    private var bodyWidth: CGFloat {
+        if isMinimized { return 60 }
+        if appState.isListening { return 248 }
+        return (appState.showCaptureBubble || !appState.overdueTodos.isEmpty) ? 240 : 150
+    }
+
+    /// Tiny idle dock — just the buddy, small.
+    private var minimizedView: some View {
+        mascot(size: 44)
+            .onTapGesture { appState.wakeMascot() }
+            .padding(.bottom, 2)
     }
 
     // MARK: - Idle / compact
 
     private var compact: some View {
         VStack(spacing: 8) {
+            if !appState.overdueTodos.isEmpty { reminderBubble }
+            if appState.showCaptureBubble { captureBubble }
             if hovering || !appState.statusLine.isEmpty {
                 Text(appState.statusLine)
                     .font(.system(size: 11, weight: .semibold))
@@ -47,24 +66,82 @@ struct CharacterView: View {
         .padding(.bottom, 4)
     }
 
+    /// Nudges about overdue tasks — click to jump to To-Dos.
+    private var reminderBubble: some View {
+        Button { appState.openDashboard?(.todos) } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).font(.system(size: 14))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(appState.overdueTodos.count) task\(appState.overdueTodos.count == 1 ? "" : "s") overdue")
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
+                    if let first = appState.overdueTodos.first {
+                        Text(first.title).font(.system(size: 10)).foregroundStyle(Theme.inkSoft).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(9)
+            .frame(maxWidth: 220, alignment: .leading)
+            .macdaCard(Theme.card, radius: 12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.orange.opacity(0.5), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Shows the latest screen capture (thumbnail + AI analysis) in the bubble.
+    private var captureBubble: some View {
+        let art = appState.artifacts.first
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
+                Image(systemName: "camera.fill").font(.system(size: 9))
+                Text("SCREEN CAPTURE").font(.system(size: 8, weight: .bold)).tracking(0.5)
+            }
+            .foregroundStyle(Theme.accentDeep)
+            if let art, let img = NSImage(contentsOfFile: art.imagePath) {
+                Image(nsImage: img).resizable().scaledToFit()
+                    .frame(maxWidth: .infinity).frame(maxHeight: 84)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.hairline))
+            }
+            if let art {
+                if art.analyzing {
+                    HStack(spacing: 5) { ProgressView().controlSize(.small); Text("Analyzing…").font(.system(size: 10)).foregroundStyle(Theme.inkSoft) }
+                } else if !art.aiText.isEmpty {
+                    Text(art.aiText).font(.system(size: 10)).foregroundStyle(Theme.ink)
+                        .lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(9)
+        .frame(maxWidth: 220, alignment: .leading)
+        .macdaCard(Theme.card, radius: 12)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.accentSoft.opacity(0.6), lineWidth: 1))
+    }
+
     // MARK: - Listening / HUD
 
     private var expandedHUD: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             statusCard
+            if appState.showCaptureBubble { captureBubble }
             if !caughtText.isEmpty { caughtBubble }
-            mascot(size: 92).onTapGesture { appState.toggleListening() }
+            mascot(size: 58).onTapGesture { appState.toggleListening() }
         }
     }
 
     private var statusCard: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
+        VStack(spacing: 9) {
+            HStack(spacing: 8) {
                 miniAvatar
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Listening…").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.ink)
-                    Text("\(appState.activeMeeting?.title ?? "Call") · \(elapsedString)")
-                        .font(.system(size: 11)).foregroundStyle(Theme.inkSoft)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Listening…").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
+                    // TimelineView so the timer ticks even during silence (when the
+                    // view wouldn't otherwise re-render) — keeps it in sync with the menu bar.
+                    TimelineView(.periodic(from: .now, by: 1)) { _ in
+                        Text("\(appState.activeMeeting?.title ?? "Call") · \(appState.liveElapsedString)")
+                            .font(.system(size: 10)).foregroundStyle(Theme.inkSoft)
+                    }
                 }
                 Spacer()
                 LevelBars(level: appState.liveLevel, color: Theme.accent)
@@ -83,51 +160,42 @@ struct CharacterView: View {
                 stat("\(appState.todos.filter { !$0.done }.count)", "to-dos")
             }
 
-            Divider().overlay(Theme.hairline)
-
-            Toggle(isOn: Binding(get: { appState.settings.autoListen },
-                                 set: { appState.setAutoListen($0) })) {
-                Text("Auto-listen on speech").font(.system(size: 12)).foregroundStyle(Theme.ink)
-            }
-            .toggleStyle(.switch).tint(Theme.accent)
-
             Button { appState.openDashboard?(nil) } label: {
                 HStack {
-                    Text("Open dashboard").font(.system(size: 12)).foregroundStyle(Theme.inkSoft)
+                    Text("Open dashboard").font(.system(size: 11)).foregroundStyle(Theme.inkSoft)
                     Spacer()
-                    Text("⌥⌘D").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.inkSoft)
+                    Text("⌥⌘D").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.inkSoft)
                 }
             }
             .buttonStyle(.plain)
         }
-        .padding(14)
-        .macdaCard(Theme.card, radius: 18)
+        .padding(11)
+        .macdaCard(Theme.card, radius: 16)
     }
 
     private var caughtBubble: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 5) {
             Text("CAUGHT THAT")
-                .font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .font(.system(size: 8, weight: .bold)).tracking(0.5)
                 .foregroundStyle(Theme.accentDeep)
             Text("“\(caughtText)”")
-                .font(.system(size: 12)).foregroundStyle(Theme.ink)
+                .font(.system(size: 11)).foregroundStyle(Theme.ink)
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 6) {
-                Chip(text: "+ to-do", kind: .accent)
-                if appState.transcribingCount > 0 { Chip(text: "transcribing", systemImage: "waveform", kind: .neutral) }
+            if appState.transcribingCount > 0 {
+                Chip(text: "transcribing \(appState.transcribingCount)", systemImage: "waveform", kind: .neutral)
             }
         }
-        .padding(12)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .macdaCard(Theme.card, radius: 14)
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.accentSoft.opacity(0.6), lineWidth: 1))
+        .macdaCard(Theme.card, radius: 12)
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.accentSoft.opacity(0.6), lineWidth: 1))
     }
 
     private var caughtText: String {
         let t = [appState.partialTranscript, appState.livePreview]
             .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             .joined(separator: " ")
-        return String(t.suffix(160))
+        return String(t.suffix(120))
     }
 
     // MARK: - Pieces
@@ -142,20 +210,21 @@ struct CharacterView: View {
     }
 
     private func stat(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 1) {
-            Text(value).font(.system(size: 18, weight: .bold)).foregroundStyle(Theme.accentDeep)
-            Text(label).font(.system(size: 10)).foregroundStyle(Theme.inkSoft)
+        VStack(spacing: 0) {
+            Text(value).font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.accentDeep)
+            Text(label).font(.system(size: 9)).foregroundStyle(Theme.inkSoft)
         }
         .frame(maxWidth: .infinity)
     }
 
     private var divider: some View {
-        Rectangle().fill(Theme.hairline).frame(width: 1, height: 26)
+        Rectangle().fill(Theme.hairline).frame(width: 1, height: 22)
     }
 
     private func mascot(size: CGFloat) -> some View {
         MascotBlob(mood: appState.mood, level: appState.isListening ? appState.liveLevel : 0,
-                   blink: blink, breathe: breathe, customHex: appState.settings.mascotColorHex)
+                   blink: blink, breathe: breathe, customHex: appState.settings.mascotColorHex,
+                   style: appState.settings.mascotStyle)
             .frame(width: size, height: size)
             .scaleEffect(CGFloat(appState.settings.mascotScale) * (appState.isListening ? 1 : 1.15))
     }
@@ -180,6 +249,7 @@ struct MascotBlob: View {
     var blink: Bool
     var breathe: Bool
     var customHex: String
+    var style: String = "bear"
 
     private var accent: Color {
         switch mood {
@@ -200,11 +270,20 @@ struct MascotBlob: View {
                         .frame(width: s * (1.0 + CGFloat(level)), height: s * (1.0 + CGFloat(level)))
                         .blur(radius: 10)
                 }
-                // ears
-                HStack(spacing: s * 0.34) {
-                    ear(s); ear(s)
+                // ears / antenna (varies by avatar style)
+                if style == "robot" {
+                    VStack(spacing: 0) {
+                        Circle().fill(accent).frame(width: s * 0.12, height: s * 0.12)
+                        Rectangle().fill(accent).frame(width: s * 0.035, height: s * 0.16)
+                    }
+                    .offset(y: -s * 0.54)
+                } else {
+                    HStack(spacing: earSpacing * s) {
+                        earShape(s)
+                        earShape(s).scaleEffect(x: -1)
+                    }
+                    .offset(y: earOffset * s)
                 }
-                .offset(y: -s * 0.42)
                 // body
                 Circle()
                     .fill(
@@ -226,9 +305,25 @@ struct MascotBlob: View {
         }
     }
 
-    private func ear(_ s: CGFloat) -> some View {
-        Capsule().fill(accent)
-            .frame(width: s * 0.16, height: s * 0.28)
+    private var earSpacing: CGFloat { style == "bunny" ? 0.30 : 0.34 }
+    private var earOffset: CGFloat {
+        switch style {
+        case "bunny": return -0.56
+        case "cat", "fox": return -0.46
+        default: return -0.42
+        }
+    }
+
+    @ViewBuilder
+    private func earShape(_ s: CGFloat) -> some View {
+        switch style {
+        case "cat", "fox":
+            Triangle().fill(accent).frame(width: s * 0.22, height: s * 0.26)
+        case "bunny":
+            Capsule().fill(accent).frame(width: s * 0.13, height: s * 0.4)
+        default: // bear — round ears
+            Circle().fill(accent).frame(width: s * 0.24, height: s * 0.24)
+        }
     }
 
     private func face(_ s: CGFloat) -> some View {
@@ -291,6 +386,8 @@ struct ContextMenuContent: View {
         Button(appState.isListening ? "Stop Listening" : "Start Listening") { appState.toggleListening() }
         Toggle("Auto-listen (start on speech)", isOn: Binding(
             get: { appState.settings.autoListen }, set: { appState.setAutoListen($0) }))
+        Toggle("Talking mode (speak replies)", isOn: Binding(
+            get: { appState.settings.talkBack }, set: { appState.setTalkBack($0) }))
         Divider()
         Menu("Size") {
             Button("Tiny") { appState.setMascotScale(0.45) }
@@ -303,9 +400,15 @@ struct ContextMenuContent: View {
                 Button(p.name) { appState.setMascotColor(p.hex) }
             }
         }
+        Menu("Buddy") {
+            ForEach(mascotStyles, id: \.id) { s in
+                Button(s.name) { appState.setMascotStyle(s.id) }
+            }
+        }
         Button("Hide mascot") { appState.setShowMascot(false) }
         Divider()
         Button("Capture Screen (⌥⌘S)") { appState.captureScreenshot() }
+        if appState.isListening { Button("Open Live View…") { appState.openLiveView?() } }
         Button("Chat…") { appState.openDashboard?(.chat) }
         Button("Notes…") { appState.openDashboard?(.notes) }
         Button("Meetings…") { appState.openDashboard?(.meetings) }
@@ -313,6 +416,18 @@ struct ContextMenuContent: View {
         Button("Settings…") { appState.openDashboard?(.settings) }
         Divider()
         Button("Quit Macda") { NSApp.terminate(nil) }
+    }
+}
+
+/// A triangle pointing up (cat/fox ears).
+struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
     }
 }
 

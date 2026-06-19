@@ -21,10 +21,14 @@ final class LiveWindowController {
             win.backgroundColor = NSColor(Theme.darkBg)
             win.isReleasedWhenClosed = false
             win.contentView = NSHostingView(rootView: LiveView(appState: appState))
+            win.level = .floating
+            win.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             win.center()
             window = win
         }
-        window?.makeKeyAndOrderFront(nil)
+        // orderFrontRegardless shows it even when Macda is an accessory app
+        // (mascot-only mode), which makeKeyAndOrderFront doesn't do reliably.
+        window?.orderFrontRegardless()
     }
 
     func hide() {

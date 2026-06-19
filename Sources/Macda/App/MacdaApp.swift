@@ -12,6 +12,7 @@ import SwiftUI
 enum MacdaMain {
     @MainActor
     static func main() {
+        Log.installCrashHandlers()
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

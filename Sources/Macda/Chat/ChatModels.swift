@@ -9,3 +9,13 @@ struct ChatMessage: Identifiable, Hashable, Codable {
     var text: String
     var createdAt: Date = Date()
 }
+
+extension ChatMessage {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = c.decodeOr(.id, UUID())
+        role = c.decodeOr(.role, .assistant)
+        text = c.decodeOr(.text, "")
+        createdAt = c.decodeOr(.createdAt, Date())
+    }
+}

@@ -49,6 +49,14 @@ struct ChatView: View {
                 }.foregroundStyle(Theme.inkSoft)
             }
             Spacer()
+            Button {
+                appState.setTalkBack(!appState.settings.talkBack)
+            } label: {
+                Image(systemName: appState.settings.talkBack ? "speaker.wave.2.fill" : "speaker.slash")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(appState.settings.talkBack ? Theme.accent : Theme.inkSoft)
+            .help("Talking mode — read replies aloud")
             Button { appState.clearChat() } label: { Image(systemName: "trash") }
                 .buttonStyle(.plain).foregroundStyle(Theme.inkSoft)
         }
@@ -59,6 +67,7 @@ struct ChatView: View {
     private var providerLabel: String {
         switch appState.settings.llmProvider {
         case .ollama: return "On your Mac · Ollama"
+        case .openRouter: return "OpenRouter"
         case .openAI: return "OpenAI"
         case .gemini: return "Gemini"
         }
@@ -115,7 +124,16 @@ struct ChatView: View {
 
     private var inputBar: some View {
         HStack(spacing: 8) {
-            TextField("Message Macda…", text: $draft, axis: .vertical)
+            Button { appState.toggleDictation() } label: {
+                Image(systemName: appState.dictating ? "stop.circle.fill" : "mic.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(appState.dictating ? Color.red : Theme.accentDeep, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help(appState.dictating ? "Stop & send" : "Talk to Macda")
+            TextField(appState.dictating ? "Listening…" : "Message Macda…", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain).font(.system(size: 13))
                 .padding(.horizontal, 12).padding(.vertical, 9)
                 .background(Theme.card, in: Capsule())

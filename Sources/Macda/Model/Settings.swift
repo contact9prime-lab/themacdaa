@@ -2,6 +2,7 @@ import Foundation
 
 enum TranscriptionProvider: String, Codable, CaseIterable, Identifiable {
     case whisperCpp   // local, via whisper.cpp binary — accurate, fast
+    case openRouter   // OpenRouter audio model (free options available)
     case openAI       // Whisper API
     case gemini       // Gemini audio understanding
     case ollamaAudio  // local multimodal LLM (gemma4 / gemma3n) — experimental
@@ -9,6 +10,7 @@ enum TranscriptionProvider: String, Codable, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .whisperCpp: return "whisper.cpp (local, recommended)"
+        case .openRouter: return "OpenRouter (free audio models)"
         case .openAI: return "OpenAI Whisper"
         case .gemini: return "Gemini"
         case .ollamaAudio: return "Ollama audio LLM (experimental)"
@@ -18,12 +20,14 @@ enum TranscriptionProvider: String, Codable, CaseIterable, Identifiable {
 
 enum LLMProviderKind: String, Codable, CaseIterable, Identifiable {
     case ollama   // local
+    case openRouter
     case openAI
     case gemini
     var id: String { rawValue }
     var label: String {
         switch self {
         case .ollama: return "Ollama (local)"
+        case .openRouter: return "OpenRouter (free models)"
         case .openAI: return "OpenAI"
         case .gemini: return "Gemini"
         }
@@ -46,10 +50,14 @@ struct Settings: Codable {
     var whisperCppBinaryPath: String = "/usr/local/bin/whisper-cli"
     var whisperModelPath: String = ""    // e.g. ~/models/ggml-base.en.bin
     var whisperLanguage: String = "auto" // "auto", "en", "hi", … (use a multilingual model for non-English)
+    var whisperUseGPU = true             // turn off if whisper crashes on Metal/ggml init
     var ollamaBaseURL: String = "http://127.0.0.1:11434"
     var ollamaModel: String = "llama3.1"
     var ollamaTranscribeModel: String = ""   // empty = use ollamaModel
     var visionModel: String = ""             // screenshot analysis model; empty = use ollamaModel
+    var autoCaptureScreen = false            // auto-snapshot the screen during a call
+    var autoCaptureOnChange = true           // true = on screen change; false = on a timer
+    var autoCaptureInterval: Double = 60     // seconds between timed auto-captures
 
     // Cloud keys (stored in UserDefaults for simplicity; move to Keychain for prod)
     var openAIKey: String = ""
@@ -57,6 +65,8 @@ struct Settings: Codable {
     var openAITranscribeModel: String = "gpt-4o-mini-transcribe"  // faster/better than whisper-1
     var geminiKey: String = ""
     var geminiModel: String = "gemini-1.5-flash"
+    var openRouterKey: String = ""
+    var openRouterModel: String = "google/gemini-2.0-flash-exp:free"  // free + handles audio & text
 
     // Capture behaviour
     var captureMic = true
@@ -65,22 +75,29 @@ struct Settings: Codable {
     var autoStopOnSilence = true
     var silenceThreshold: Float = 0.012   // RMS below this counts as "quiet"
     var silenceTimeout: Double = 12        // seconds of quiet before auto-stop
-    var maxChunkSeconds: Double = 20       // hard cut for batching
+    var maxChunkSeconds: Double = 30       // transcribe in ~30s batches
     var parallelTranscriptions = 3         // batch concurrency
     var customDataDirectory = ""           // empty = default Application Support
     var recordingRetentionDays = 1         // keep audio chunks this many days
     var maxStorageMB = 500                 // prune oldest recordings past this size
 
+    // Owner / onboarding
+    var ownerName = ""
+    var onboarded = false
+    var talkBack = false                    // speak Macda's chat replies aloud (talking mode)
+
     // Mascot appearance
     var mascotScale: Double = 0.62         // 0.4 (tiny) … 1.2 (big)
-    var mascotColorHex = ""                // empty = default blue
+    var mascotColorHex = ""                // empty = default
+    var mascotStyle = "bear"               // bear | cat | bunny | fox | robot
     var showMascot = true
 
     // Auto-listen
     var autoListen = false                 // start recording automatically on speech
+    var autoListenThreshold: Float = 0.009 // RMS to count as speech (lower = more sensitive)
 
     // Voiceprints
-    var voiceMatchThreshold: Float = 0.82  // cosine similarity to call it the same voice
+    var voiceMatchThreshold: Float = 0.70  // cosine similarity to call it the same voice (lower = matches more readily)
 
     var audioSources: AudioSourceOptions {
         var s: AudioSourceOptions = []
@@ -139,15 +156,21 @@ extension Settings {
         whisperCppBinaryPath    = s(.whisperCppBinaryPath, d.whisperCppBinaryPath)
         whisperModelPath        = s(.whisperModelPath, d.whisperModelPath)
         whisperLanguage         = s(.whisperLanguage, d.whisperLanguage)
+        whisperUseGPU           = s(.whisperUseGPU, d.whisperUseGPU)
         ollamaBaseURL           = s(.ollamaBaseURL, d.ollamaBaseURL)
         ollamaModel             = s(.ollamaModel, d.ollamaModel)
         ollamaTranscribeModel   = s(.ollamaTranscribeModel, d.ollamaTranscribeModel)
         visionModel             = s(.visionModel, d.visionModel)
+        autoCaptureScreen       = s(.autoCaptureScreen, d.autoCaptureScreen)
+        autoCaptureOnChange     = s(.autoCaptureOnChange, d.autoCaptureOnChange)
+        autoCaptureInterval     = s(.autoCaptureInterval, d.autoCaptureInterval)
         openAIKey               = s(.openAIKey, d.openAIKey)
         openAIModel             = s(.openAIModel, d.openAIModel)
         openAITranscribeModel   = s(.openAITranscribeModel, d.openAITranscribeModel)
         geminiKey               = s(.geminiKey, d.geminiKey)
         geminiModel             = s(.geminiModel, d.geminiModel)
+        openRouterKey           = s(.openRouterKey, d.openRouterKey)
+        openRouterModel         = s(.openRouterModel, d.openRouterModel)
         captureMic              = s(.captureMic, d.captureMic)
         captureSystem           = s(.captureSystem, d.captureSystem)
         micDeviceUID            = s(.micDeviceUID, d.micDeviceUID)
@@ -158,10 +181,15 @@ extension Settings {
         parallelTranscriptions  = s(.parallelTranscriptions, d.parallelTranscriptions)
         customDataDirectory     = s(.customDataDirectory, d.customDataDirectory)
         recordingRetentionDays  = s(.recordingRetentionDays, d.recordingRetentionDays)
+        ownerName               = s(.ownerName, d.ownerName)
+        onboarded               = s(.onboarded, d.onboarded)
+        talkBack                = s(.talkBack, d.talkBack)
         mascotScale             = s(.mascotScale, d.mascotScale)
         mascotColorHex          = s(.mascotColorHex, d.mascotColorHex)
+        mascotStyle             = s(.mascotStyle, d.mascotStyle)
         showMascot              = s(.showMascot, d.showMascot)
         autoListen              = s(.autoListen, d.autoListen)
+        autoListenThreshold     = s(.autoListenThreshold, d.autoListenThreshold)
         voiceMatchThreshold     = s(.voiceMatchThreshold, d.voiceMatchThreshold)
         maxStorageMB            = s(.maxStorageMB, d.maxStorageMB)
     }

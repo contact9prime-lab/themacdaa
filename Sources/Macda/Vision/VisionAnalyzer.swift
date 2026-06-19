@@ -22,6 +22,8 @@ struct VisionAnalyzer {
         switch settings.llmProvider {
         case .ollama:
             return try await ollama(b64)
+        case .openRouter:
+            return try await openRouter(b64)
         case .openAI:
             return try await openAI(b64)
         case .gemini:
@@ -44,6 +46,24 @@ struct VisionAnalyzer {
             throw TranscriberError.decode("Unexpected Ollama vision response.")
         }
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func openRouter(_ b64: String) async throws -> String {
+        guard !settings.openRouterKey.isEmpty else { throw TranscriberError.missingConfig("OpenRouter API key missing.") }
+        let m = settings.visionModel.isEmpty ? settings.openRouterModel : settings.visionModel
+        let url = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
+        let payload: [String: Any] = [
+            "model": m,
+            "messages": [[
+                "role": "user",
+                "content": [
+                    ["type": "text", "text": prompt],
+                    ["type": "image_url", "image_url": ["url": "data:image/png;base64,\(b64)"]]
+                ]
+            ]]
+        ]
+        let data = try await Networking.postJSON(url, payload, headers: OpenRouter.headers(settings.openRouterKey))
+        return OpenRouter.content(from: data)
     }
 
     private func openAI(_ b64: String) async throws -> String {

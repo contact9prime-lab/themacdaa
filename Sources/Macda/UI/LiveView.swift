@@ -39,9 +39,11 @@ struct LiveView: View {
             .padding(.horizontal, 9).padding(.vertical, 5)
             .background(Theme.darkCard, in: Capsule())
             Spacer()
-            Text(appState.liveElapsedString)
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                .foregroundStyle(Theme.darkText).monospacedDigit()
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Text(appState.liveElapsedString)
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.darkText).monospacedDigit()
+            }
         }
         .padding(.horizontal, 22).padding(.top, 18)
     }

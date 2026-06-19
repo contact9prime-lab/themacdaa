@@ -103,7 +103,14 @@ final class Store {
 
     private func load<T: Decodable>(_ name: String, as type: T.Type) -> T? {
         guard let data = try? Data(contentsOf: url(name)) else { return nil }
-        return try? decoder.decode(T.self, from: data)
+        if let decoded = try? decoder.decode(T.self, from: data) { return decoded }
+        // Decode failed but the file had content — back it up so it's never lost.
+        if data.count > 4 {
+            let backup = url("\(name).bak")
+            try? data.write(to: backup, options: .atomic)
+            Log.error("Could not decode \(name); preserved raw copy at \(backup.lastPathComponent)")
+        }
+        return nil
     }
 
     private func save<T: Encodable>(_ value: T, to name: String) {
@@ -131,6 +138,9 @@ final class Store {
 
     func loadArtifacts() -> [Artifact] { load("artifacts.json", as: [Artifact].self) ?? [] }
     func saveArtifacts(_ a: [Artifact]) { save(a, to: "artifacts.json") }
+
+    func loadPending() -> [PendingExtraction] { load("pending_extractions.json", as: [PendingExtraction].self) ?? [] }
+    func savePending(_ p: [PendingExtraction]) { save(p, to: "pending_extractions.json") }
 
     /// Folder for captured screen artifacts (PNG), kept with the data.
     var artifactsDir: URL {

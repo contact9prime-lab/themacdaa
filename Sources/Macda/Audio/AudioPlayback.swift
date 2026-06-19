@@ -8,9 +8,31 @@ final class AudioPlayback: NSObject, ObservableObject {
     static let shared = AudioPlayback()
     @Published var playingPath: String?
     private var player: AVAudioPlayer?
+    private var queue: [String] = []
+    private var sequenceID: String?
 
     func toggle(_ path: String) {
         if playingPath == path { stop() } else { play(path) }
+    }
+
+    /// Play a list of clips back-to-back (a meeting recording). `id` lets the UI
+    /// show play/stop state for the whole sequence.
+    func playSequence(_ paths: [String], id: String) {
+        let existing = paths.filter { FileManager.default.fileExists(atPath: $0) }
+        guard !existing.isEmpty else { return }
+        if sequenceID == id { stop(); return }
+        stop()
+        sequenceID = id
+        queue = Array(existing.dropFirst())
+        play(existing[0], partOfSequence: true)
+        playingPath = id
+    }
+
+    private func play(_ path: String, partOfSequence: Bool) {
+        player?.stop()
+        player = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
+        player?.delegate = self
+        _ = player?.play()
     }
 
     func play(_ path: String) {
@@ -28,6 +50,8 @@ final class AudioPlayback: NSObject, ObservableObject {
         player?.stop()
         player = nil
         playingPath = nil
+        queue = []
+        sequenceID = nil
     }
 
     func available(_ path: String) -> Bool {
@@ -37,6 +61,15 @@ final class AudioPlayback: NSObject, ObservableObject {
 
 extension AudioPlayback: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in self.playingPath = nil }
+        Task { @MainActor in
+            // Continue a sequence if more clips remain.
+            if self.sequenceID != nil, !self.queue.isEmpty {
+                let next = self.queue.removeFirst()
+                self.play(next, partOfSequence: true)
+            } else {
+                self.playingPath = nil
+                self.sequenceID = nil
+            }
+        }
     }
 }

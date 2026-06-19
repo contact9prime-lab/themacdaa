@@ -21,6 +21,9 @@ struct ConnectionTester {
         switch settings.llmProvider {
         case .ollama:
             return await testOllama()
+        case .openRouter:
+            return await testChat(OpenRouterChatProvider(apiKey: settings.openRouterKey, model: settings.openRouterModel),
+                                  label: "OpenRouter")
         case .openAI:
             return await testChat(OpenAIChatProvider(apiKey: settings.openAIKey, model: settings.openAIModel),
                                   label: "OpenAI")

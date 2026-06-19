@@ -15,6 +15,7 @@ final class AgentEngine {
         let s = appState?.settings ?? Settings()
         switch s.llmProvider {
         case .ollama: return OllamaProvider(baseURL: s.ollamaBaseURL, model: s.ollamaModel)
+        case .openRouter: return OpenRouterChatProvider(apiKey: s.openRouterKey, model: s.openRouterModel)
         case .openAI: return OpenAIChatProvider(apiKey: s.openAIKey, model: s.openAIModel)
         case .gemini: return GeminiChatProvider(apiKey: s.geminiKey, model: s.geminiModel)
         }
@@ -103,13 +104,17 @@ final class AgentEngine {
         case "add_todo":
             guard let title = args["title"], !title.isEmpty else { return "missing title" }
             let due = args["due"].flatMap { ISO8601DateFormatter.dateOnly.date(from: $0) }
-            app.todos.insert(TodoItem(title: title, due: due, meetingID: nil, createdAt: Date()), at: 0)
+            app.todos.insert(TodoItem(title: title, assignee: app.ownerDisplayName, due: due, meetingID: nil, createdAt: Date()), at: 0)
             app.persistChatData()
             return "added to-do: \(title)"
         case "add_note":
             guard let text = args["text"], !text.isEmpty else { return "missing text" }
             app.addManualNote(text)
             return "saved note"
+        case "set_talking_mode":
+            let on = ["true", "on", "yes", "1"].contains((args["on"] ?? "true").lowercased())
+            app.setTalkBack(on)
+            return on ? "talking mode on — I'll speak my replies" : "talking mode off"
         default:
             return "unknown tool"
         }
@@ -135,6 +140,7 @@ final class AgentEngine {
         • list_todos      {"status": "open|done|all"}
         • add_todo        {"title": "...", "due": "YYYY-MM-DD or omit"}
         • add_note        {"text": "..."}
+        • set_talking_mode{"on": true|false}    ← when the user asks to talk / talking mode
 
         For time-based questions ("today", "this week", "what happened", "recent"), \
         use recent_activity — NEVER search_notes/search_meetings with a date string, \

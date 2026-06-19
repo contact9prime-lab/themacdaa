@@ -7,12 +7,52 @@ struct DashboardView: View {
         HStack(spacing: 0) {
             sidebar
             Divider().overlay(Theme.hairline)
-            detail
-                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.cream)
+            VStack(spacing: 0) {
+                if appState.isListening || appState.transcribingCount > 0 { liveStrip }
+                detail
+            }
+            .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.cream)
         }
         .background(Theme.cream)
         .preferredColorScheme(.light)
+    }
+
+    // Live transcription strip — shows while listening on every tab.
+    private var liveStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle().fill(Theme.accent).frame(width: 8, height: 8)
+                Text(appState.isListening ? "Listening" : "Wrapping up")
+                    .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.accentDeep)
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    Text(appState.liveElapsedString).font(.system(size: 12)).foregroundStyle(Theme.inkSoft).monospacedDigit()
+                }
+                Spacer()
+                if appState.transcribingCount > 0 {
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.small).tint(Theme.accent)
+                        Text("transcribing \(appState.transcribingCount)").font(.system(size: 11)).foregroundStyle(Theme.inkSoft)
+                    }
+                }
+            }
+            // Progress toward the next 30s batch — fills, then a new entry arrives.
+            ProgressView(value: appState.batchProgress)
+                .tint(Theme.accent)
+            if !liveText.isEmpty {
+                Text(liveText).font(.system(size: 12)).foregroundStyle(Theme.ink)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(Theme.liveHighlight)
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(Theme.accentSoft.opacity(0.5)), alignment: .bottom)
+    }
+
+    private var liveText: String {
+        [appState.partialTranscript, appState.livePreview]
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            .joined(separator: " ").suffix(180).description
     }
 
     // MARK: Sidebar
@@ -86,6 +126,7 @@ struct DashboardView: View {
         case .meetings: MeetingsView(appState: appState)
         case .people: PeopleView(appState: appState)
         case .artifacts: ArtifactsView(appState: appState)
+        case .logs: LogsView()
         case .settings: SettingsView(appState: appState)
         }
     }
@@ -96,6 +137,8 @@ struct DashboardView: View {
 struct NotesView: View {
     @ObservedObject var appState: AppState
     @State private var draft = ""
+    @State private var editingID: UUID?
+    @State private var editText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -112,11 +155,39 @@ struct NotesView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(appState.notes) { note in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(note.text).font(.system(size: 13)).foregroundStyle(Theme.ink)
-                                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                                Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.system(size: 11)).foregroundStyle(Theme.inkSoft)
+                            VStack(alignment: .leading, spacing: 6) {
+                                if editingID == note.id {
+                                    TextEditor(text: $editText)
+                                        .font(.system(size: 13)).frame(minHeight: 60)
+                                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline))
+                                    HStack {
+                                        Spacer()
+                                        Button("Cancel") { editingID = nil }
+                                        Button("Save") { appState.updateNoteText(note, text: editText); editingID = nil }
+                                            .keyboardShortcut(.defaultAction)
+                                    }
+                                } else {
+                                    HStack(alignment: .top) {
+                                        Text(note.text).font(.system(size: 13)).foregroundStyle(Theme.ink)
+                                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                        Spacer()
+                                        Button { editingID = note.id; editText = note.text } label: {
+                                            Image(systemName: "pencil").font(.system(size: 11))
+                                        }.buttonStyle(.plain).foregroundStyle(Theme.inkSoft)
+                                        Button(role: .destructive) { appState.deleteNote(note) } label: {
+                                            Image(systemName: "trash").font(.system(size: 11))
+                                        }.buttonStyle(.plain).foregroundStyle(Theme.inkSoft)
+                                    }
+                                    if !note.tags.isEmpty {
+                                        ScrollView(.horizontal, showsIndicators: false) {
+                                            HStack(spacing: 5) {
+                                                ForEach(note.tags, id: \.self) { Chip(text: $0, kind: .neutral) }
+                                            }
+                                        }
+                                    }
+                                    Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.system(size: 11)).foregroundStyle(Theme.inkSoft)
+                                }
                             }
                             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
                             .macdaCard()
@@ -139,39 +210,110 @@ struct NotesView: View {
 
 struct TodosView: View {
     @ObservedObject var appState: AppState
+    @State private var editingID: UUID?
+    @State private var editText = ""
+    @State private var newTitle = ""
+    @State private var newDue = Date().addingTimeInterval(3600)
+    @State private var withDue = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header("To-Dos", subtitle: "Action items Macda heard you agree to.")
+            header("To-Dos", subtitle: "Action items Macda heard you agree to — add your own with a reminder.")
+            HStack(spacing: 8) {
+                TextField("New task…", text: $newTitle).textFieldStyle(.roundedBorder).onSubmit(add)
+                Toggle("Remind", isOn: $withDue).toggleStyle(.checkbox)
+                if withDue {
+                    DatePicker("", selection: $newDue, in: Date()...)
+                        .labelsHidden().datePickerStyle(.compact)
+                }
+                Button("Add", action: add).disabled(newTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.horizontal).padding(.bottom, 8)
+
             if appState.todos.isEmpty {
                 emptyState("Nothing to do 🎉", "Action items from calls land here.")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(appState.todos) { todo in
-                            HStack(alignment: .top, spacing: 10) {
-                                Button { appState.toggleTodo(todo) } label: {
-                                    Image(systemName: todo.done ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(todo.done ? Theme.chipGreenInk : Theme.inkSoft)
-                                }
-                                .buttonStyle(.plain)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(todo.title).font(.system(size: 13))
-                                        .strikethrough(todo.done)
-                                        .foregroundStyle(todo.done ? Theme.inkSoft : Theme.ink)
-                                    if let due = todo.due {
-                                        Text("Due \(due, style: .date)").font(.system(size: 11)).foregroundStyle(Theme.accentDeep)
-                                    }
-                                }
-                                Spacer()
-                            }
-                            .padding(12).macdaCard()
+                            todoRow(todo)
                         }
                     }
                     .padding()
                 }
             }
         }
+    }
+
+    private func add() {
+        appState.addTodo(newTitle, due: withDue ? newDue : nil)
+        newTitle = ""
+    }
+
+    private func isOverdue(_ todo: TodoItem) -> Bool {
+        guard !todo.done, let due = todo.due else { return false }
+        return due < Date()
+    }
+
+    @ViewBuilder
+    private func todoRow(_ todo: TodoItem) -> some View {
+        let overdue = isOverdue(todo)
+        HStack(alignment: .top, spacing: 10) {
+            Button { appState.toggleTodo(todo) } label: {
+                Image(systemName: todo.done ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(todo.done ? Theme.chipGreenInk : Theme.inkSoft)
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 5) {
+                if editingID == todo.id {
+                    HStack {
+                        TextField("Task", text: $editText).textFieldStyle(.roundedBorder)
+                            .onSubmit { appState.updateTodoTitle(todo, title: editText); editingID = nil }
+                        Button("Save") { appState.updateTodoTitle(todo, title: editText); editingID = nil }
+                        Button("Cancel") { editingID = nil }
+                    }
+                } else {
+                    Text(todo.title).font(.system(size: 13))
+                        .strikethrough(todo.done)
+                        .foregroundStyle(todo.done ? Theme.inkSoft : Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 6) {
+                    if !todo.assignee.isEmpty {
+                        Chip(text: todo.assignee, systemImage: "person.fill", kind: .green)
+                    }
+                    if let due = todo.due {
+                        Chip(text: (overdue ? "Overdue " : "Due ") + due.formatted(.dateTime.month(.abbreviated).day()),
+                             systemImage: "calendar", kind: overdue ? .accent : .neutral)
+                    }
+                }
+            }
+            Spacer()
+
+            Menu {
+                Section("Assign to") {
+                    ForEach(appState.assignableNames, id: \.self) { name in
+                        Button(name) { appState.reassignTodo(todo, to: name) }
+                    }
+                }
+            } label: {
+                Image(systemName: "person.crop.circle.badge.checkmark").font(.system(size: 12))
+            }
+            .menuStyle(.borderlessButton).frame(width: 22)
+
+            Button { editingID = todo.id; editText = todo.title } label: {
+                Image(systemName: "pencil").font(.system(size: 11))
+            }
+            .buttonStyle(.plain).foregroundStyle(Theme.inkSoft)
+
+            Button(role: .destructive) { appState.deleteTodo(todo) } label: {
+                Image(systemName: "trash").font(.system(size: 11))
+            }
+            .buttonStyle(.plain).foregroundStyle(Theme.inkSoft)
+        }
+        .padding(12).macdaCard()
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(overdue ? .orange.opacity(0.6) : .clear, lineWidth: 1.5))
     }
 }
 

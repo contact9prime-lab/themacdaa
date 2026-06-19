@@ -10,6 +10,8 @@
     <string>ai.accacia.macda</string>
     <key>CFBundleExecutable</key>
     <string>Macda</string>
+    <key>CFBundleIconFile</key>
+    <string>Macda</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

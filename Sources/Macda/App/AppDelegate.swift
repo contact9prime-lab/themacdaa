@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 import Combine
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
     let appState = AppState()
 
     private var menuBar: MenuBarController!
@@ -11,9 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var hotKeys: HotKeyManager!
     private var dashboard: DashboardWindowController!
     private var liveWindow: LiveWindowController!
+    private var onboarding: OnboardingWindowController!
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // System notifications (reminders show as banners even when unfocused).
+        UNUserNotificationCenter.current().delegate = self
+        Notifier.shared.requestAuthorization()
+
         // Even as a menu-bar app, install a main menu so the standard editing
         // shortcuts (⌘C/⌘V/⌘X/⌘A/⌘Z) work in the dashboard's text fields.
         installMainMenu()
@@ -39,16 +45,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 onScreenshot: { [weak self] in self?.appState.captureScreenshot() })
         hotKeys.register()
 
-        // Dark "live" window appears while listening.
+        // Task reminder popups.
+        let reminders = ReminderWindowController(appState: appState)
+        appState.onDueReminder = { todo in reminders.present(todo) }
+
+        // Optional dark "live" window — the mascot HUD covers live status, so this
+        // is only opened on demand (right-click → Open Live View). It auto-closes
+        // when a call ends.
         liveWindow = LiveWindowController(appState: appState)
+        appState.openLiveView = { [weak self] in self?.liveWindow.show() }
         appState.$isListening
             .removeDuplicates()
-            .sink { [weak self] listening in
-                if listening { self?.liveWindow.show() } else { self?.liveWindow.hide() }
-            }
+            .sink { [weak self] listening in if !listening { self?.liveWindow.hide() } }
             .store(in: &cancellables)
 
         appState.bootstrap()
+
+        // First-run onboarding: ask who you are + pick a buddy.
+        if !appState.settings.onboarded {
+            onboarding = OnboardingWindowController(appState: appState)
+            onboarding.show()
+        }
     }
 
     /// Full menu bar: Macda / Edit / View (tab switching) / Window.
@@ -117,6 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.regular)
         dashboard.show(delegate: self)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // Show banners + play sound even while Macda is the active app.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 
     // When the dashboard closes, drop back to a menu-bar-only accessory app.

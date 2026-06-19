@@ -9,21 +9,26 @@ cd "$ROOT"
 CONFIG="${1:-release}"
 APP="$ROOT/build/Macda.app"
 
-echo "▶︎ Building ($CONFIG)…"
-swift build -c "$CONFIG"
-
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/Macda"
-if [[ ! -f "$BIN" ]]; then
-  echo "✗ Executable not found at $BIN" >&2
-  exit 1
+# Build a UNIVERSAL binary (arm64 + x86_64) so it runs on Apple Silicon AND
+# Intel Macs. Built per-arch then lipo'd (the combined --arch flag hits a
+# SwiftPM "duplicate .abi.json" bug).
+echo "▶︎ Building universal ($CONFIG)…"
+swift build -c "$CONFIG" --arch arm64   --scratch-path "$ROOT/.build-arm" >/dev/null
+swift build -c "$CONFIG" --arch x86_64  --scratch-path "$ROOT/.build-x86" >/dev/null
+ARM="$(swift build -c "$CONFIG" --arch arm64  --scratch-path "$ROOT/.build-arm" --show-bin-path)/Macda"
+X86="$(swift build -c "$CONFIG" --arch x86_64 --scratch-path "$ROOT/.build-x86" --show-bin-path)/Macda"
+if [[ ! -f "$ARM" || ! -f "$X86" ]]; then
+  echo "✗ Per-arch binaries not found" >&2; exit 1
 fi
 
 echo "▶︎ Assembling app bundle…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/Macda"
+lipo -create "$ARM" "$X86" -output "$APP/Contents/MacOS/Macda"
+echo "  arch: $(lipo -archs "$APP/Contents/MacOS/Macda")"
 cp "$ROOT/bundle/Info.plist" "$APP/Contents/Info.plist"
 echo "APPL????" > "$APP/Contents/PkgInfo"
+[ -f "$ROOT/bundle/Macda.icns" ] && cp "$ROOT/bundle/Macda.icns" "$APP/Contents/Resources/Macda.icns"
 
 # Prefer the stable "Macda Dev" identity so TCC permissions persist across
 # rebuilds. Fall back to ad-hoc if it's missing or not yet authorized.

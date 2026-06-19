@@ -10,8 +10,13 @@ let package = Package(
         .executable(name: "Macda", targets: ["Macda"])
     ],
     targets: [
+        .target(
+            name: "MacdaObjC",
+            path: "Sources/MacdaObjC"
+        ),
         .executableTarget(
             name: "Macda",
+            dependencies: ["MacdaObjC"],
             path: "Sources/Macda",
             swiftSettings: [
                 .swiftLanguageMode(.v5)
